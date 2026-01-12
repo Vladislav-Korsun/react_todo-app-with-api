@@ -10,6 +10,7 @@ import {
 } from './api/todos';
 import classNames from 'classnames';
 import { Todo } from './types/Todo';
+import { TodoItem } from './components/TodoItem';
 
 type Filter = 'all' | 'active' | 'completed';
 
@@ -22,8 +23,6 @@ export const App: React.FC = () => {
   const [isAdding, setIsAdding] = useState(false);
   const [loadingTodoIds, setLoadingTodoIds] = useState<number[]>([]);
   const [tempTodo, setTempTodo] = useState<Todo | null>(null);
-  const [editingTodoId, setEditingTodoId] = useState<number | null>(null);
-  const [editingTitle, setEditingTitle] = useState('');
 
   const hasTodos = todos.length > 0;
   const allCompleted = todos.length > 0 && todos.every(todo => todo.completed);
@@ -118,20 +117,19 @@ export const App: React.FC = () => {
       });
   };
 
-  const handleDelete = (todoId: number) => {
+  const handleDelete = async (todoId: number): Promise<void> => {
     setLoadingTodoIds(current => [...current, todoId]);
 
-    deleteTodo(todoId)
-      .then(() => {
-        setTodos(current => current.filter(todo => todo.id !== todoId));
-      })
-      .catch(() => {
-        setError('Unable to delete a todo');
-      })
-      .finally(() => {
-        setLoadingTodoIds(current => current.filter(id => id !== todoId));
-        newTodoRef.current?.focus();
-      });
+    try {
+      await deleteTodo(todoId);
+      setTodos(current => current.filter(todo => todo.id !== todoId));
+    } catch {
+      setError('Unable to delete a todo');
+      throw new Error();
+    } finally {
+      setLoadingTodoIds(current => current.filter(id => id !== todoId));
+      newTodoRef.current?.focus();
+    }
   };
 
   const handleClearCompleted = () => {
@@ -165,7 +163,7 @@ export const App: React.FC = () => {
       });
   };
 
-  const handleToggle = (todo: Todo) => {
+  /*const handleToggle = (todo: Todo) => {
     setLoadingTodoIds(ids => [...ids, todo.id]);
     setError('');
 
@@ -181,7 +179,7 @@ export const App: React.FC = () => {
       .finally(() => {
         setLoadingTodoIds(ids => ids.filter(id => id !== todo.id));
       });
-  };
+  };*/
 
   const handleToggleAll = () => {
     const newStatus = !allCompleted;
@@ -219,40 +217,6 @@ export const App: React.FC = () => {
       .finally(() => setLoadingTodoIds([]));
   };
 
-  const handleRename = (todo: Todo) => {
-    const title = editingTitle.trim();
-
-    if (title === todo.title) {
-      setEditingTodoId(null);
-
-      return;
-    }
-
-    if (!title) {
-      handleDelete(todo.id);
-      setEditingTodoId(null);
-
-      return;
-    }
-
-    setLoadingTodoIds(ids => [...ids, todo.id]);
-    setError('');
-
-    updateTodo(todo.id, { title })
-      .then(updatedTodo => {
-        setTodos(current =>
-          current.map(t => (t.id === todo.id ? updatedTodo : t)),
-        );
-      })
-      .catch(() => {
-        setError('Unable to update a todo');
-      })
-      .finally(() => {
-        setEditingTodoId(null);
-        setLoadingTodoIds(ids => ids.filter(id => id !== todo.id));
-      });
-  };
-
   return (
     <div className="todoapp">
       <h1 className="todoapp__title">todos</h1>
@@ -287,80 +251,36 @@ export const App: React.FC = () => {
 
         <section className="todoapp__main" data-cy="TodoList">
           {visibleTodos.map(todo => (
-            <div
+            <TodoItem
               key={todo.id}
-              data-cy="Todo"
-              className={classNames('todo', {
-                completed: todo.completed,
-              })}
-            >
-              <div
-                data-cy="TodoLoader"
-                className={classNames('modal overlay', {
-                  'is-active': loadingTodoIds.includes(todo.id),
-                })}
-              >
-                <div className="modal-background has-background-white-ter" />
-                <div className="loader" />
-              </div>
+              todo={todo}
+              isLoading={loadingTodoIds.includes(todo.id)}
+              onDelete={handleDelete}
+              onUpdateTodo={updatedTodo => {
+                setLoadingTodoIds(ids => [...ids, updatedTodo.id]);
 
-              <label className="todo__status-label">
-                <input
-                  data-cy="TodoStatus"
-                  type="checkbox"
-                  className="todo__status"
-                  checked={todo.completed}
-                  onChange={() => handleToggle(todo)}
-                  disabled={loadingTodoIds.includes(todo.id)}
-                />
-              </label>
-
-              {editingTodoId === todo.id ? (
-                <form
-                  onSubmit={e => {
-                    e.preventDefault();
-                    handleRename(todo);
-                  }}
-                >
-                  <input
-                    data-cy="TodoTitleField"
-                    className="todo__title-field"
-                    value={editingTitle}
-                    autoFocus
-                    onChange={e => setEditingTitle(e.target.value)}
-                    onBlur={() => handleRename(todo)}
-                    onKeyUp={e => {
-                      if (e.key === 'Escape') {
-                        setEditingTodoId(null);
-                      }
-                    }}
-                    disabled={loadingTodoIds.includes(todo.id)}
-                  />
-                </form>
-              ) : (
-                <>
-                  <span
-                    data-cy="TodoTitle"
-                    className="todo__title"
-                    onDoubleClick={() => {
-                      setEditingTodoId(todo.id);
-                      setEditingTitle(todo.title);
-                    }}
-                  >
-                    {todo.title}
-                  </span>
-
-                  <button
-                    type="button"
-                    className="todo__remove"
-                    data-cy="TodoDelete"
-                    onClick={() => handleDelete(todo.id)}
-                  >
-                    ×
-                  </button>
-                </>
-              )}
-            </div>
+                return updateTodo(updatedTodo.id, {
+                  title: updatedTodo.title,
+                  completed: updatedTodo.completed,
+                })
+                  .then(serverTodo => {
+                    setTodos(current =>
+                      current.map(t =>
+                        t.id === serverTodo.id ? serverTodo : t,
+                      ),
+                    );
+                  })
+                  .catch(() => {
+                    setError('Unable to update a todo');
+                    throw new Error();
+                  })
+                  .finally(() => {
+                    setLoadingTodoIds(ids =>
+                      ids.filter(id => id !== updatedTodo.id),
+                    );
+                  });
+              }}
+            />
           ))}
           {tempTodo && (
             <div data-cy="Todo" className="todo">
